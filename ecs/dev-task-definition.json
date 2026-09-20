@@ -1,4 +1,3 @@
-```json
 {
   "family": "springspark-dev-task",
   "networkMode": "awsvpc",
@@ -37,4 +36,4 @@
     }
   ]
 }
-```
+
