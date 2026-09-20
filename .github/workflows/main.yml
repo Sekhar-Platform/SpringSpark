@@ -4,8 +4,6 @@ on:
   push:
     branches:
       - develop
-      - qa
-      - main
 
   workflow_dispatch:
 
@@ -145,7 +143,12 @@ jobs:
           echo "Task Definition JSON: ${TASK_DEFINITION_FILE}"
 
           echo "========================================"
-
+      - name: Debug GitHub context
+        run: |
+         echo "Repository : ${{ github.repository }}"
+         echo "Branch     : ${{ github.ref_name }}"
+         echo "Ref        : ${{ github.ref }}"
+         echo "Environment: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'qa' && 'qa' || 'development' }}"
 
       # ==================================================
       # 5. Configure AWS
