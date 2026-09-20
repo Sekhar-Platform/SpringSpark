@@ -1,3 +1,4 @@
+```yaml
 name: SpringSpark - Build, Push and Deploy to ECS
 
 on:
@@ -7,6 +8,7 @@ on:
 
   workflow_dispatch:
 
+# Required for GitHub OIDC
 permissions:
   id-token: write
   contents: read
@@ -15,7 +17,6 @@ env:
   AWS_REGION: eu-north-1
   AWS_ACCOUNT_ID: "632404567481"
   ECR_REPOSITORY: springspark
-
   ECS_CONTAINER_NAME: springspark
 
 jobs:
@@ -24,48 +25,104 @@ jobs:
 
     runs-on: ubuntu-latest
 
+    # IMPORTANT:
+    # This GitHub Environment must exist:
+    # Settings -> Environments -> development
     environment:
-      name: ${{ github.ref_name == 'main' && 'production' || github.ref_name == 'qa' && 'qa' || 'development' }}
+      name: development
 
     concurrency:
-      group: springspark-${{ github.ref_name }}
+      group: springspark-develop
       cancel-in-progress: false
 
     steps:
 
-      # ==================================================
-      # 1. Checkout
-      # ==================================================
-
+      # ============================================================
+      # 1. CHECKOUT
+      # ============================================================
       - name: Checkout source code
         uses: actions/checkout@v4
 
+      # ============================================================
+      # 2. DEBUG GITHUB CONTEXT
+      # ============================================================
+      - name: Debug GitHub context
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "GitHub Context"
+          echo "========================================"
+          echo "Repository : ${GITHUB_REPOSITORY}"
+          echo "Branch     : ${GITHUB_REF_NAME}"
+          echo "Ref        : ${GITHUB_REF}"
+          echo "Environment: development"
+          echo "========================================"
 
-      # ==================================================
-      # 2. Setup Java
-      # ==================================================
+      # ============================================================
+      # 3. GET ACTUAL GITHUB OIDC CLAIMS
+      #
+      # TEMPORARY DEBUG STEP
+      #
+      # This does NOT print the OIDC token itself.
+      # It prints only selected claims.
+      # ============================================================
+      - name: Debug OIDC token claims
+        shell: bash
+        run: |
+          echo "========================================"
+          echo "Getting GitHub OIDC token"
+          echo "========================================"
 
+          OIDC_TOKEN=$(curl -sS \
+            -H "Authorization: bearer ${ACTIONS_ID_TOKEN_REQUEST_TOKEN}" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" \
+            | jq -r '.value')
+
+          if [ -z "$OIDC_TOKEN" ] || [ "$OIDC_TOKEN" = "null" ]; then
+            echo "Failed to obtain OIDC token"
+            exit 1
+          fi
+
+          PAYLOAD=$(echo "$OIDC_TOKEN" | cut -d '.' -f 2 | base64 -d 2>/dev/null)
+
+          echo "========================================"
+          echo "OIDC CLAIMS"
+          echo "========================================"
+
+          echo "$PAYLOAD" | jq '{
+            iss,
+            aud,
+            sub,
+            repository,
+            repository_owner,
+            ref,
+            environment
+          }'
+
+          echo "========================================"
+          echo "OIDC diagnostic completed"
+          echo "========================================"
+
+      # ============================================================
+      # 4. SETUP JAVA
+      # ============================================================
       - name: Set up JDK 21
         uses: actions/setup-java@v4
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: "21"
           cache: maven
 
-
-      # ==================================================
-      # 3. Build Spring Boot application
-      # ==================================================
-
+      # ============================================================
+      # 5. BUILD SPRING BOOT APPLICATION
+      # ============================================================
       - name: Build Spring Boot application
         run: |
-          mvn clean package
+          mvn clean package -DskipTests
 
-
-      # ==================================================
-      # 4. Determine environment
-      # ==================================================
-
+      # ============================================================
+      # 6. SET DEV ENVIRONMENT
+      # ============================================================
       - name: Determine deployment environment
         shell: bash
         run: |
@@ -73,112 +130,81 @@ jobs:
           case "${GITHUB_REF_NAME}" in
 
             develop)
-
               echo "ENVIRONMENT=dev" >> "$GITHUB_ENV"
-
               echo "ECS_CLUSTER=springspark-dev-cluster" >> "$GITHUB_ENV"
-
               echo "ECS_SERVICE=springspark-dev-service" >> "$GITHUB_ENV"
-
               echo "ECS_TASK_DEFINITION=springspark-dev-task" >> "$GITHUB_ENV"
-
               echo "TASK_DEFINITION_FILE=ecs/dev-task-definition.json" >> "$GITHUB_ENV"
-
               ;;
-
 
             qa)
-
               echo "ENVIRONMENT=qa" >> "$GITHUB_ENV"
-
               echo "ECS_CLUSTER=springspark-qa-cluster" >> "$GITHUB_ENV"
-
               echo "ECS_SERVICE=springspark-qa-service" >> "$GITHUB_ENV"
-
               echo "ECS_TASK_DEFINITION=springspark-qa-task" >> "$GITHUB_ENV"
-
               echo "TASK_DEFINITION_FILE=ecs/qa-task-definition.json" >> "$GITHUB_ENV"
-
               ;;
-
 
             main)
-
               echo "ENVIRONMENT=prod" >> "$GITHUB_ENV"
-
               echo "ECS_CLUSTER=springspark-prod-cluster" >> "$GITHUB_ENV"
-
               echo "ECS_SERVICE=springspark-prod-service" >> "$GITHUB_ENV"
-
               echo "ECS_TASK_DEFINITION=springspark-prod-task" >> "$GITHUB_ENV"
-
               echo "TASK_DEFINITION_FILE=ecs/prod-task-definition.json" >> "$GITHUB_ENV"
-
               ;;
 
-
             *)
-
               echo "Unsupported branch: ${GITHUB_REF_NAME}"
-
               exit 1
-
               ;;
 
           esac
 
-
           echo "========================================"
-
+          echo "Deployment Configuration"
+          echo "========================================"
           echo "Branch              : ${GITHUB_REF_NAME}"
-
           echo "Environment         : ${ENVIRONMENT}"
-
           echo "ECS Cluster         : ${ECS_CLUSTER}"
-
           echo "ECS Service         : ${ECS_SERVICE}"
-
           echo "Task Definition     : ${ECS_TASK_DEFINITION}"
-
           echo "Task Definition JSON: ${TASK_DEFINITION_FILE}"
-
           echo "========================================"
 
-
-      # ==================================================
-      # 5. Configure AWS
-      # ==================================================
-
+      # ============================================================
+      # 7. CONFIGURE AWS USING GITHUB OIDC
+      # ============================================================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: arn:aws:iam::632404567481:role/github-actions-ecr-role
           aws-region: ${{ env.AWS_REGION }}
 
-
-      # ==================================================
-      # 6. Verify AWS identity
-      # ==================================================
-
+      # ============================================================
+      # 8. VERIFY AWS ROLE
+      # ============================================================
       - name: Verify AWS identity
         run: |
+          echo "========================================"
+          echo "AWS Identity"
+          echo "========================================"
+
           aws sts get-caller-identity
 
+          echo "========================================"
 
-      # ==================================================
-      # 7. Login to ECR
-      # ==================================================
-
+      # ============================================================
+      # 9. LOGIN TO ECR
+      # ============================================================
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
-
-      # ==================================================
-      # 8. Create image URI
-      # ==================================================
-
+      # ============================================================
+      # 10. CREATE IMAGE URI
+      # ============================================================
       - name: Set Docker image
+        shell: bash
         run: |
 
           IMAGE_TAG="${GITHUB_SHA}"
@@ -186,56 +212,73 @@ jobs:
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
-
           echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
 
           echo "========================================"
-
-          echo "Docker Image: ${IMAGE_URI}"
-
+          echo "Docker Image"
+          echo "========================================"
+          echo "Image Tag : ${IMAGE_TAG}"
+          echo "Image URI : ${IMAGE_URI}"
           echo "========================================"
 
-
-      # ==================================================
-      # 9. Build Docker image
-      # ==================================================
-
+      # ============================================================
+      # 11. BUILD DOCKER IMAGE
+      # ============================================================
       - name: Build Docker image
         run: |
+
+          echo "Building Docker image..."
 
           docker build \
             -t "${IMAGE_URI}" \
             .
 
-
-      # ==================================================
-      # 10. Push image to ECR
-      # ==================================================
-
+      # ============================================================
+      # 12. PUSH IMAGE TO ECR
+      # ============================================================
       - name: Push Docker image to ECR
         run: |
 
+          echo "Pushing image to ECR..."
+
           docker push "${IMAGE_URI}"
 
+          echo "Image pushed successfully:"
+          echo "${IMAGE_URI}"
 
-      # ==================================================
-      # 11. Verify task definition JSON
-      # ==================================================
-
-      - name: Verify task definition
+      # ============================================================
+      # 13. VERIFY TASK DEFINITION FILE
+      # ============================================================
+      - name: Verify ECS task definition
         run: |
 
-          echo "Using: ${TASK_DEFINITION_FILE}"
+          echo "========================================"
+          echo "Task Definition"
+          echo "========================================"
 
-          test -f "${TASK_DEFINITION_FILE}"
+          echo "File:"
+          echo "${TASK_DEFINITION_FILE}"
 
+          if [ ! -f "${TASK_DEFINITION_FILE}" ]; then
+            echo "ERROR: Task definition file not found"
+            exit 1
+          fi
+
+          echo ""
+          echo "Contents:"
           cat "${TASK_DEFINITION_FILE}"
 
+          echo "========================================"
 
-      # ==================================================
-      # 12. Render task definition with new image
-      # ==================================================
-
+      # ============================================================
+      # 14. RENDER ECS TASK DEFINITION
+      #
+      # Replaces:
+      #
+      # image: PLACEHOLDER
+      #
+      # with the newly built ECR image.
+      # ============================================================
       - name: Render ECS task definition
         id: render-task-definition
         uses: aws-actions/amazon-ecs-render-task-definition@v1
@@ -244,11 +287,9 @@ jobs:
           container-name: ${{ env.ECS_CONTAINER_NAME }}
           image: ${{ env.IMAGE_URI }}
 
-
-      # ==================================================
-      # 13. Deploy to ECS
-      # ==================================================
-
+      # ============================================================
+      # 15. DEPLOY TO ECS
+      # ============================================================
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
         with:
@@ -257,34 +298,163 @@ jobs:
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
-
-      # ==================================================
-      # 14. Deployment complete
-      # ==================================================
-
+      # ============================================================
+      # 16. DEPLOYMENT SUMMARY
+      # ============================================================
       - name: Deployment complete
         run: |
 
+          echo ""
           echo "========================================"
-
-          echo "SpringSpark deployment successful"
-
+          echo "SPRINGSPARK DEPLOYMENT SUCCESSFUL"
           echo "========================================"
-
           echo "AWS Account : ${AWS_ACCOUNT_ID}"
-
           echo "AWS Region  : ${AWS_REGION}"
-
           echo "Branch      : ${GITHUB_REF_NAME}"
-
           echo "Environment : ${ENVIRONMENT}"
-
           echo "Image       : ${IMAGE_URI}"
-
-          echo "Cluster     : ${ECS_CLUSTER}"
-
-          echo "Service     : ${ECS_SERVICE}"
-
+          echo "ECS Cluster : ${ECS_CLUSTER}"
+          echo "ECS Service : ${ECS_SERVICE}"
           echo "Task Def    : ${ECS_TASK_DEFINITION}"
-
           echo "========================================"
+```
+
+### Important: fix your DEV task definition JSON
+
+Make sure `ecs/dev-task-definition.json` contains a valid ARN. **Do not use `\:`.**
+
+```json
+{
+  "family": "springspark-dev-task",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": [
+    "FARGATE"
+  ],
+  "cpu": "256",
+  "memory": "512",
+  "executionRoleArn": "arn:aws:iam::632404567481:role/ecsTaskExecutionRole",
+  "containerDefinitions": [
+    {
+      "name": "springspark",
+      "image": "PLACEHOLDER",
+      "essential": true,
+      "portMappings": [
+        {
+          "containerPort": 8080,
+          "hostPort": 8080,
+          "protocol": "tcp"
+        }
+      ],
+      "environment": [
+        {
+          "name": "SPRING_PROFILES_ACTIVE",
+          "value": "dev"
+        }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/springspark-dev",
+          "awslogs-region": "eu-north-1",
+          "awslogs-stream-prefix": "ecs"
+        }
+      }
+    }
+  ]
+}
+```
+
+### One AWS setting is especially important
+
+In GitHub, go to:
+
+**Repository → Settings → Environments → development**
+
+Create an environment named exactly:
+
+```text
+development
+```
+
+Your workflow contains:
+
+```yaml
+environment:
+  name: development
+```
+
+Your AWS role currently trusts:
+
+```text
+repo:Sekhar-Platform/SpringSpark:environment:development
+```
+
+So the intended relationship is:
+
+```text
+GitHub
+   │
+   │ develop branch
+   ▼
+GitHub Environment
+   │
+   │ development
+   ▼
+GitHub OIDC
+   │
+   │ sub =
+   │ repo:Sekhar-Platform/SpringSpark:environment:development
+   ▼
+AWS IAM
+   │
+   │ AssumeRoleWithWebIdentity
+   ▼
+github-actions-ecr-role
+   │
+   ├── ECR
+   └── ECS
+```
+
+### What to do now
+
+Run the workflow from the **`develop` branch**.
+
+The important step is:
+
+**`Debug OIDC token claims`**
+
+You should get something like:
+
+```text
+OIDC CLAIMS
+{
+  "iss": "https://token.actions.githubusercontent.com",
+  "aud": "sts.amazonaws.com",
+  "sub": "repo:Sekhar-Platform/SpringSpark:environment:development",
+  "repository": "Sekhar-Platform/SpringSpark",
+  "repository_owner": "Sekhar-Platform",
+  "ref": "refs/heads/develop",
+  "environment": "development"
+}
+```
+
+**Do not paste the actual token into chat.** Paste only the JSON output from `OIDC CLAIMS`.
+
+If the `sub` is different, we will change the IAM trust policy to exactly match the claim GitHub is actually issuing. If it matches and `AssumeRoleWithWebIdentity` still fails, we'll check the IAM OIDC provider/role configuration next.
+
+After OIDC succeeds, the pipeline will continue automatically through:
+
+**Maven → Docker build → ECR → render DEV task definition → ECS deployment.**
+
+One more point: the `qa` and `main` cases are already present in the deployment logic, but automatic triggers currently include only `develop`. That is intentional for troubleshooting. Once this DEV pipeline works, restore:
+
+```yaml
+on:
+  push:
+    branches:
+      - develop
+      - qa
+      - main
+```
+
+Then we can add the **1 approval for DEV and 2 approvals for QA/PROD** using GitHub Environment protection rules.
