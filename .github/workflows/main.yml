@@ -1,4 +1,3 @@
-
 name: SpringSpark - Build, Push and Deploy to ECS
 
 on:
@@ -13,11 +12,6 @@ permissions:
   id-token: write
   contents: read
 
-env:
-  AWS_REGION: eu-north-1
-  AWS_ACCOUNT_ID: "632404567481"
-  ECR_REPOSITORY: springspark
-  ECS_CONTAINER_NAME: springspark
 
 jobs:
 
@@ -25,15 +19,38 @@ jobs:
 
     runs-on: ubuntu-latest
 
-    # IMPORTANT:
-    # This GitHub Environment must exist:
+    # ============================================================
+    # GITHUB ENVIRONMENT
+    # ============================================================
+    # This selects:
     # Settings -> Environments -> development
+    #
+    # All variables configured inside the development environment
+    # are available through ${{ vars.* }}
+    # ============================================================
     environment:
       name: development
 
     concurrency:
       group: springspark-develop
       cancel-in-progress: false
+
+    # ============================================================
+    # ENVIRONMENT VARIABLES
+    # ============================================================
+    # Values come from:
+    # GitHub -> Settings -> Environments -> development
+    # ============================================================
+    env:
+      AWS_REGION: ${{ vars.AWS_REGION }}
+      AWS_ACCOUNT_ID: ${{ vars.AWS_ACCOUNT_ID }}
+      ECR_REPOSITORY: ${{ vars.ECR_REPOSITORY }}
+      ECS_CONTAINER_NAME: ${{ vars.ECS_CONTAINER_NAME }}
+
+      ECS_CLUSTER: ${{ vars.ECS_CLUSTER }}
+      ECS_SERVICE: ${{ vars.ECS_SERVICE }}
+      ECS_TASK_DEFINITION: ${{ vars.ECS_TASK_DEFINITION }}
+      TASK_DEFINITION_FILE: ${{ vars.TASK_DEFINITION_FILE }}
 
     steps:
 
@@ -43,22 +60,49 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@v4
 
+
       # ============================================================
       # 2. DEBUG GITHUB CONTEXT
       # ============================================================
       - name: Debug GitHub context
         shell: bash
         run: |
+
           echo "========================================"
           echo "GitHub Context"
           echo "========================================"
-          echo "Repository : ${GITHUB_REPOSITORY}"
-          echo "Branch     : ${GITHUB_REF_NAME}"
-          echo "Ref        : ${GITHUB_REF}"
-          echo "Environment: development"
+
+          echo "Repository  : ${GITHUB_REPOSITORY}"
+          echo "Branch      : ${GITHUB_REF_NAME}"
+          echo "Ref         : ${GITHUB_REF}"
+          echo "Environment : development"
+
           echo "========================================"
 
-      
+
+      # ============================================================
+      # 3. DISPLAY DEVELOPMENT CONFIGURATION
+      # ============================================================
+      - name: Display deployment configuration
+        shell: bash
+        run: |
+
+          echo "========================================"
+          echo "Development Deployment Configuration"
+          echo "========================================"
+
+          echo "AWS Account          : ${AWS_ACCOUNT_ID}"
+          echo "AWS Region           : ${AWS_REGION}"
+          echo "ECR Repository       : ${ECR_REPOSITORY}"
+          echo "ECS Container        : ${ECS_CONTAINER_NAME}"
+          echo "ECS Cluster          : ${ECS_CLUSTER}"
+          echo "ECS Service          : ${ECS_SERVICE}"
+          echo "ECS Task Definition  : ${ECS_TASK_DEFINITION}"
+          echo "Task Definition File : ${TASK_DEFINITION_FILE}"
+
+          echo "========================================"
+
+
       # ============================================================
       # 4. SETUP JAVA
       # ============================================================
@@ -69,6 +113,7 @@ jobs:
           java-version: "21"
           cache: maven
 
+
       # ============================================================
       # 5. BUILD SPRING BOOT APPLICATION
       # ============================================================
@@ -76,71 +121,23 @@ jobs:
         run: |
           mvn clean package -DskipTests
 
-      # ============================================================
-      # 6. SET DEV ENVIRONMENT
-      # ============================================================
-      - name: Determine deployment environment
-        shell: bash
-        run: |
-
-          case "${GITHUB_REF_NAME}" in
-
-            develop)
-              echo "ENVIRONMENT=dev" >> "$GITHUB_ENV"
-              echo "ECS_CLUSTER=springspark-dev-cluster" >> "$GITHUB_ENV"
-              echo "ECS_SERVICE=springspark-dev-service" >> "$GITHUB_ENV"
-              echo "ECS_TASK_DEFINITION=springspark-dev-task" >> "$GITHUB_ENV"
-              echo "TASK_DEFINITION_FILE=ecs/dev-task-definition.json" >> "$GITHUB_ENV"
-              ;;
-
-            qa)
-              echo "ENVIRONMENT=qa" >> "$GITHUB_ENV"
-              echo "ECS_CLUSTER=springspark-qa-cluster" >> "$GITHUB_ENV"
-              echo "ECS_SERVICE=springspark-qa-service" >> "$GITHUB_ENV"
-              echo "ECS_TASK_DEFINITION=springspark-qa-task" >> "$GITHUB_ENV"
-              echo "TASK_DEFINITION_FILE=ecs/qa-task-definition.json" >> "$GITHUB_ENV"
-              ;;
-
-            main)
-              echo "ENVIRONMENT=prod" >> "$GITHUB_ENV"
-              echo "ECS_CLUSTER=springspark-prod-cluster" >> "$GITHUB_ENV"
-              echo "ECS_SERVICE=springspark-prod-service" >> "$GITHUB_ENV"
-              echo "ECS_TASK_DEFINITION=springspark-prod-task" >> "$GITHUB_ENV"
-              echo "TASK_DEFINITION_FILE=ecs/prod-task-definition.json" >> "$GITHUB_ENV"
-              ;;
-
-            *)
-              echo "Unsupported branch: ${GITHUB_REF_NAME}"
-              exit 1
-              ;;
-
-          esac
-
-          echo "========================================"
-          echo "Deployment Configuration"
-          echo "========================================"
-          echo "Branch              : ${GITHUB_REF_NAME}"
-          echo "Environment         : ${ENVIRONMENT}"
-          echo "ECS Cluster         : ${ECS_CLUSTER}"
-          echo "ECS Service         : ${ECS_SERVICE}"
-          echo "Task Definition     : ${ECS_TASK_DEFINITION}"
-          echo "Task Definition JSON: ${TASK_DEFINITION_FILE}"
-          echo "========================================"
 
       # ============================================================
-      # 7. CONFIGURE AWS USING GITHUB OIDC
+      # 6. CONFIGURE AWS USING GITHUB OIDC
       # ============================================================
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: arn:aws:iam::632404567481:role/github-actions-ecr-role
-          aws-region: ${{ env.AWS_REGION }}
+          role-to-assume: arn:aws:iam::${{ vars.AWS_ACCOUNT_ID }}:role/github-actions-ecr-role
+          aws-region: ${{ vars.AWS_REGION }}
+
 
       # ============================================================
-      # 8. VERIFY AWS ROLE
+      # 7. VERIFY AWS ROLE
       # ============================================================
       - name: Verify AWS identity
         run: |
+
           echo "========================================"
           echo "AWS Identity"
           echo "========================================"
@@ -149,15 +146,17 @@ jobs:
 
           echo "========================================"
 
+
       # ============================================================
-      # 9. LOGIN TO ECR
+      # 8. LOGIN TO ECR
       # ============================================================
       - name: Login to Amazon ECR
         id: login-ecr
         uses: aws-actions/amazon-ecr-login@v2
 
+
       # ============================================================
-      # 10. CREATE IMAGE URI
+      # 9. CREATE DOCKER IMAGE URI
       # ============================================================
       - name: Set Docker image
         shell: bash
@@ -173,12 +172,15 @@ jobs:
           echo "========================================"
           echo "Docker Image"
           echo "========================================"
+
           echo "Image Tag : ${IMAGE_TAG}"
           echo "Image URI : ${IMAGE_URI}"
+
           echo "========================================"
 
+
       # ============================================================
-      # 11. BUILD DOCKER IMAGE
+      # 10. BUILD DOCKER IMAGE
       # ============================================================
       - name: Build Docker image
         run: |
@@ -189,8 +191,11 @@ jobs:
             -t "${IMAGE_URI}" \
             .
 
+          echo "Docker image built successfully."
+
+
       # ============================================================
-      # 12. PUSH IMAGE TO ECR
+      # 11. PUSH IMAGE TO ECR
       # ============================================================
       - name: Push Docker image to ECR
         run: |
@@ -199,41 +204,55 @@ jobs:
 
           docker push "${IMAGE_URI}"
 
-          echo "Image pushed successfully:"
+          echo "========================================"
+          echo "Image pushed successfully"
+          echo "========================================"
+
           echo "${IMAGE_URI}"
 
+
       # ============================================================
-      # 13. VERIFY TASK DEFINITION FILE
+      # 12. VERIFY ECS TASK DEFINITION
       # ============================================================
       - name: Verify ECS task definition
         run: |
 
           echo "========================================"
-          echo "Task Definition"
+          echo "ECS Task Definition"
           echo "========================================"
 
           echo "File:"
           echo "${TASK_DEFINITION_FILE}"
 
           if [ ! -f "${TASK_DEFINITION_FILE}" ]; then
-            echo "ERROR: Task definition file not found"
+
+            echo "ERROR: Task definition file not found:"
+            echo "${TASK_DEFINITION_FILE}"
+
             exit 1
+
           fi
 
           echo ""
-          echo "Contents:"
+          echo "Task definition contents:"
+          echo ""
+
           cat "${TASK_DEFINITION_FILE}"
 
+          echo ""
           echo "========================================"
 
+
       # ============================================================
-      # 14. RENDER ECS TASK DEFINITION
-      #
+      # 13. RENDER ECS TASK DEFINITION
+      # ============================================================
       # Replaces:
       #
       # image: PLACEHOLDER
       #
-      # with the newly built ECR image.
+      # with:
+      #
+      # <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/springspark:<GITHUB_SHA>
       # ============================================================
       - name: Render ECS task definition
         id: render-task-definition
@@ -243,8 +262,9 @@ jobs:
           container-name: ${{ env.ECS_CONTAINER_NAME }}
           image: ${{ env.IMAGE_URI }}
 
+
       # ============================================================
-      # 15. DEPLOY TO ECS
+      # 14. DEPLOY TO ECS
       # ============================================================
       - name: Deploy to ECS
         uses: aws-actions/amazon-ecs-deploy-task-definition@v2
@@ -254,8 +274,9 @@ jobs:
           cluster: ${{ env.ECS_CLUSTER }}
           wait-for-service-stability: true
 
+
       # ============================================================
-      # 16. DEPLOYMENT SUMMARY
+      # 15. DEPLOYMENT SUMMARY
       # ============================================================
       - name: Deployment complete
         run: |
@@ -264,12 +285,20 @@ jobs:
           echo "========================================"
           echo "SPRINGSPARK DEPLOYMENT SUCCESSFUL"
           echo "========================================"
+
           echo "AWS Account : ${AWS_ACCOUNT_ID}"
           echo "AWS Region  : ${AWS_REGION}"
           echo "Branch      : ${GITHUB_REF_NAME}"
-          echo "Environment : ${ENVIRONMENT}"
+          echo "Environment : development"
+
           echo "Image       : ${IMAGE_URI}"
+
+          echo "ECR Repo    : ${ECR_REPOSITORY}"
+
           echo "ECS Cluster : ${ECS_CLUSTER}"
           echo "ECS Service : ${ECS_SERVICE}"
+
           echo "Task Def    : ${ECS_TASK_DEFINITION}"
+          echo "Task JSON   : ${TASK_DEFINITION_FILE}"
+
           echo "========================================"
