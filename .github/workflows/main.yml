@@ -1,3 +1,4 @@
+
 name: SpringSpark - Build, Push and Deploy to ECS
 
 on:
@@ -22,12 +23,6 @@ jobs:
     # ============================================================
     # GITHUB ENVIRONMENT
     # ============================================================
-    # This selects:
-    # Settings -> Environments -> development
-    #
-    # All variables configured inside the development environment
-    # are available through ${{ vars.* }}
-    # ============================================================
     environment:
       name: development
 
@@ -37,9 +32,6 @@ jobs:
 
     # ============================================================
     # ENVIRONMENT VARIABLES
-    # ============================================================
-    # Values come from:
-    # GitHub -> Settings -> Environments -> development
     # ============================================================
     env:
       AWS_REGION: ${{ vars.AWS_REGION }}
@@ -158,14 +150,29 @@ jobs:
       # ============================================================
       # 9. CREATE DOCKER IMAGE URI
       # ============================================================
+      #
+      # Image tag format:
+      #
+      # <container>-<environment>-<git-sha>
+      #
+      # Example:
+      #
+      # springspark-development-e625138cc4aa9fc42b1da98a2c251cfb02619cc0
+      #
+      # ============================================================
       - name: Set Docker image
         shell: bash
         run: |
 
-          IMAGE_TAG="${GITHUB_SHA}"
+          CONTAINER_NAME="springspark"
+          ENVIRONMENT_NAME="development"
+
+          IMAGE_TAG="${CONTAINER_NAME}-${ENVIRONMENT_NAME}-${GITHUB_SHA}"
 
           IMAGE_URI="${{ steps.login-ecr.outputs.registry }}/${ECR_REPOSITORY}:${IMAGE_TAG}"
 
+          echo "CONTAINER_NAME=${CONTAINER_NAME}" >> "$GITHUB_ENV"
+          echo "ENVIRONMENT_NAME=${ENVIRONMENT_NAME}" >> "$GITHUB_ENV"
           echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_ENV"
           echo "IMAGE_URI=${IMAGE_URI}" >> "$GITHUB_ENV"
 
@@ -173,8 +180,11 @@ jobs:
           echo "Docker Image"
           echo "========================================"
 
-          echo "Image Tag : ${IMAGE_TAG}"
-          echo "Image URI : ${IMAGE_URI}"
+          echo "Container  : ${CONTAINER_NAME}"
+          echo "Environment: ${ENVIRONMENT_NAME}"
+          echo "Git SHA    : ${GITHUB_SHA}"
+          echo "Image Tag  : ${IMAGE_TAG}"
+          echo "Image URI  : ${IMAGE_URI}"
 
           echo "========================================"
 
@@ -246,13 +256,16 @@ jobs:
       # ============================================================
       # 13. RENDER ECS TASK DEFINITION
       # ============================================================
+      #
       # Replaces:
       #
       # image: PLACEHOLDER
       #
       # with:
       #
-      # <AWS_ACCOUNT_ID>.dkr.ecr.eu-north-1.amazonaws.com/springspark:<GITHUB_SHA>
+      # <AWS_ACCOUNT_ID>.dkr.ecr.<region>.amazonaws.com/springspark:
+      # springspark-development-<GITHUB_SHA>
+      #
       # ============================================================
       - name: Render ECS task definition
         id: render-task-definition
@@ -289,8 +302,10 @@ jobs:
           echo "AWS Account : ${AWS_ACCOUNT_ID}"
           echo "AWS Region  : ${AWS_REGION}"
           echo "Branch      : ${GITHUB_REF_NAME}"
-          echo "Environment : development"
+          echo "Environment : ${ENVIRONMENT_NAME}"
 
+          echo "Container   : ${CONTAINER_NAME}"
+          echo "Image Tag   : ${IMAGE_TAG}"
           echo "Image       : ${IMAGE_URI}"
 
           echo "ECR Repo    : ${ECR_REPOSITORY}"
